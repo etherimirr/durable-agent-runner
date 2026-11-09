@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>durable-agent-runner</title>
+<style>
+:root{--bg:#f7f7f4;--fg:#1a1a18;--mut:#6b6b63;--line:#deded6;--card:#fff;--ok:#15803d;--bad:#b91c1c;--run:#b45309;--acc:#1d4ed8}
+@media (prefers-color-scheme:dark){:root{--bg:#121311;--fg:#e8e8e2;--mut:#9a9a90;--line:#2b2d29;--card:#1a1c19;--ok:#4ade80;--bad:#f87171;--run:#fbbf24;--acc:#93c5fd}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+main{max-width:960px;margin:0 auto;padding:28px 16px 64px;display:grid;gap:16px}
+h1{font-size:20px;margin:0}
+.sub{color:var(--mut);margin:2px 0 0}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.card h2{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);margin:0 0 10px}
+textarea{width:100%;height:230px;font:12.5px/1.5 ui-monospace,"SF Mono",Menlo,monospace;background:transparent;color:inherit;border:1px solid var(--line);border-radius:8px;padding:10px;resize:vertical}
+button{font:inherit;padding:7px 14px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:inherit;cursor:pointer}
+button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+@media (prefers-color-scheme:dark){button.primary{color:#0b1220}}
+button:disabled{opacity:.45;cursor:default}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
+.badge{font:600 12px/1 ui-monospace,Menlo,monospace;padding:4px 8px;border-radius:999px;border:1px solid currentColor}
+.queued,.running{color:var(--run)}.succeeded,.done{color:var(--ok)}.failed,.cancelled{color:var(--bad)}
+ol{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+li{display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid var(--line);padding:4px 0}
+li code{color:var(--mut);white-space:pre-wrap;word-break:break-word}
+#log{font:12px/1.55 ui-monospace,"SF Mono",Menlo,monospace;max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-word;color:var(--mut)}
+.meta{color:var(--mut);font-size:13px}
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <h1>durable-agent-runner</h1>
+    <p class="sub">Submit a job, then reload this page or kill the worker. The run carries on and this view catches up.</p>
+  </div>
+  <div class="cols">
+    <section class="card">
+      <h2>Job</h2>
+      <textarea id="job" spellcheck="false"></textarea>
+      <div class="row">
+        <button class="primary" id="run">Run</button>
+        <button id="cancel" disabled>Cancel</button>
+        <span class="meta">thread <code id="tid"></code></span>
+      </div>
+    </section>
+    <section class="card">
+      <h2>Run <span id="status" class="badge" hidden></span></h2>
+      <p class="meta" id="runmeta">No run yet.</p>
+      <ol id="steps"></ol>
+    </section>
+  </div>
+  <section class="card"><h2>Event log</h2><div id="log"></div></section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const DEMO = {input:{rows:200000},steps:[
+  {name:"generate", python:"import json,os,random\nn=json.load(open(os.environ['DAR_INPUT']))['rows']\nrandom.seed(7)\nopen('data.csv','w').write('score,label\\n'+''.join(f'{random.random():.4f},{int(random.random()<0.3)}\\n' for _ in range(n)))\nprint(n,'rows')"},
+  {name:"scan", python:"import csv,os,time\np=os.path.join(os.environ['DAR_STEPS_DIR'],'0','data.csv')\ntp=fp=fn=0\nfor r in csv.DictReader(open(p)):\n    s,l=float(r['score'])>0.5,r['label']=='1'\n    tp+=s and l; fp+=s and not l; fn+=(not s) and l\ntime.sleep(4)\nopen('stats.txt','w').write(f'{tp} {fp} {fn}')\nprint('tp',tp,'fp',fp,'fn',fn)"},
+  {name:"report", python:"import os\ntp,fp,fn=map(int,open(os.path.join(os.environ['DAR_STEPS_DIR'],'1','stats.txt')).read().split())\nprint(f'precision {tp/(tp+fp):.3f}  recall {tp/(tp+fn):.3f}')"}
+]};
+let tid; try { tid = localStorage.getItem("dar_thread"); } catch (e) {}
+if (!tid) { tid = "t-" + Math.random().toString(36).slice(2, 10); try { localStorage.setItem("dar_thread", tid); } catch (e) {} }
+$("tid").textContent = tid;
+$("job").value = JSON.stringify(DEMO, null, 2);
+let source = null, runId = null;
+
+function setStatus(s) {
+  const b = $("status"); b.hidden = false; b.textContent = s; b.className = "badge " + s;
+  const active = s === "queued" || s === "running";
+  $("cancel").disabled = !active; $("run").disabled = active;
+}
+function line(text) { const l = $("log"); l.textContent += text + "\n"; l.scrollTop = l.scrollHeight; }
+function stepRow(idx, name) {
+  let li = document.querySelector(`li[data-i="${idx}"]`);
+  if (!li) { li = document.createElement("li"); li.dataset.i = idx; li.innerHTML = "<span></span><code></code>"; $("steps").appendChild(li); }
+  if (name) li.firstChild.textContent = `${idx + 1}. ${name}`;
+  return li;
+}
+function follow(id) {
+  runId = id; if (source) source.close();
+  $("steps").textContent = ""; $("log").textContent = "";
+  source = new EventSource(`/runs/${id}/stream`);   // the browser resends Last-Event-ID on reconnect
+  const on = (type, fn) => source.addEventListener(type, e => { const d = JSON.parse(e.data); line(`#${e.lastEventId} ${type} ${e.data}`); fn(d); });
+  on("run.queued", () => setStatus("queued"));
+  on("run.claimed", d => { setStatus("running"); $("runmeta").textContent = `run ${id.slice(0, 8)} · worker ${d.worker} · attempt ${d.attempt}`; });
+  on("run.recovered", d => { setStatus("running"); $("runmeta").textContent = `run ${id.slice(0, 8)} · taken over by ${d.worker} from ${d.previous_owner} · attempt ${d.attempt}`; });
+  on("step.started", d => { const li = stepRow(d.idx, d.name); li.lastChild.textContent = "running"; li.lastChild.className = "running"; });
+  on("step.finished", d => { const li = stepRow(d.idx); li.lastChild.textContent = d.output || (d.ok ? "done" : "failed"); li.lastChild.className = d.ok ? "done" : "failed"; });
+  on("run.cancel_requested", () => {});
+  for (const end of ["succeeded", "failed", "cancelled"]) on("run." + end, () => { setStatus(end); source.close(); });
+}
+$("run").onclick = async () => {
+  let job; try { job = JSON.parse($("job").value); } catch (e) { line("job is not valid JSON: " + e.message); return; }
+  const r = await fetch(`/threads/${tid}/runs`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(job)});
+  if (!r.ok) { line("rejected: " + await r.text()); return; }
+  follow((await r.json()).run.id);
+};
+$("cancel").onclick = () => runId && fetch(`/runs/${runId}/cancel`, {method: "POST"});
+fetch(`/threads/${tid}`).then(r => r.ok ? r.json() : null).then(t => { if (t) follow(t.run.id); });
+</script>
+</body>
+</html>

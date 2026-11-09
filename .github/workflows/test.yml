@@ -1,7 +1,7 @@
 name: test
 on: [push, pull_request]
 jobs:
-  test:
+  python:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
@@ -14,3 +14,12 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: pip install -e ".[dev]"
       - run: pytest -q
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm --prefix web ci
+      - run: npm --prefix web run build

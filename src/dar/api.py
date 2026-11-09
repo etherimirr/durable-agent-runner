@@ -43,8 +43,8 @@ def _public(run: dict[str, Any]) -> dict[str, Any]:
     return {k: run[k] for k in ("id", "thread_id", "status", "attempt", "error", "created_at", "updated_at")}
 
 
-def create_app(store: Store) -> FastAPI:
-    app = FastAPI(title="durable-agent-runner")
+def create_app(store: Store, lifespan=None, panel_path: str = "/") -> FastAPI:
+    app = FastAPI(title="durable-agent-runner", lifespan=lifespan)
 
     @app.post("/threads/{thread_id}/runs", status_code=202)
     def submit(thread_id: str, job: Job):
@@ -105,7 +105,7 @@ def create_app(store: Store) -> FastAPI:
 
         return StreamingResponse(gen(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})
 
-    @app.get("/", response_class=HTMLResponse)
+    @app.get(panel_path, response_class=HTMLResponse)
     def panel():
         with open(os.path.join(os.path.dirname(__file__), "panel.html"), encoding="utf-8") as f:
             return f.read()

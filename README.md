@@ -1,5 +1,7 @@
 # durable-agent-runner
 
+[![test](https://github.com/etherimirr/durable-agent-runner/actions/workflows/test.yml/badge.svg)](https://github.com/etherimirr/durable-agent-runner/actions/workflows/test.yml)
+
 An analysis agent that can be trusted with a long job. You give it a CSV export of model scores and ground-truth labels. It looks at the header, agrees the settings with you, runs the full analysis in the background, shows you the report, and submits it only when you say so.
 
 The interesting part is what happens when things go wrong. A worker can be killed halfway through a two-million-row scan, the API process can restart, the page can be reloaded, and the conversation picks up where it was.
